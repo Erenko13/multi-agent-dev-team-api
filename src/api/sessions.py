@@ -35,6 +35,7 @@ class PipelineSession:
     thread_id: str
     graph: Any  # CompiledStateGraph
     config: AppConfig
+    username: str = ""
     container_workspace_path: str = "/workspace"  # /workspace/project_X
     sandbox: DockerSandbox | None = None
     task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -108,7 +109,7 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     async def create_session(
-        self, requirements: str, use_sandbox: bool = True
+        self, requirements: str, use_sandbox: bool = True, username: str = ""
     ) -> PipelineSession:
         # Acquire a free slot — raises immediately if all 5 are busy
         try:
@@ -144,6 +145,7 @@ class SessionManager:
             status=ProjectStatus.queued,
             created_at=datetime.now(timezone.utc),
             requirements=requirements,
+            username=username,
             workspace_path=workspace_path,
             slot=slot,
             thread_id=thread_id,
@@ -197,6 +199,7 @@ class SessionManager:
             "status": session.status,
             "created_at": session.created_at,
             "requirements": session.requirements,
+            "username": session.username,
             "workspace_path": session.workspace_path,
             "error": session.error,
             "pending_approval": pending,
@@ -337,11 +340,15 @@ class SessionManager:
 
                 # Publish per-node events
                 for node_name, node_output in events:
+                    # LangGraph emits {"__interrupt__": (<Interrupt tuple>,)} for
+                    # interrupt nodes — skip those, the approval logic handles them
+                    if node_name == "__interrupt__":
+                        continue
                     session.publish_event(
                         ProjectEvent(
                             event_type="agent_completed",
                             agent=node_name,
-                            data={"output_keys": list(node_output.keys())},
+                            data={"output_keys": list(node_output.keys()) if isinstance(node_output, dict) else []},
                         )
                     )
 

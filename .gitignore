@@ -26,6 +26,9 @@ env/
 # Project output
 output/
 
+# Logs
+logs/
+
 # Testing
 .pytest_cache/
 .coverage

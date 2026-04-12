@@ -21,9 +21,8 @@ class ProjectStatus(str, Enum):
 
 class CreateProjectRequest(BaseModel):
     requirements: str = Field(..., min_length=1, description="What to build")
-    use_sandbox: bool = Field(
-        True, description="Run shell commands in Docker sandbox"
-    )
+    use_sandbox: bool = Field(True, description="Run shell commands in Docker sandbox")
+    username: str = Field("", description="Display name for the UI — no authentication")
 
 
 class ApprovalRequest(BaseModel):
@@ -47,6 +46,7 @@ class ProjectSummary(BaseModel):
     created_at: datetime
     current_agent: str | None = None
     requirements: str
+    username: str = ""
 
 
 class ProjectDetail(ProjectSummary):

@@ -55,6 +55,7 @@ async def create_project(
         session = await manager.create_session(
             requirements=body.requirements,
             use_sandbox=body.use_sandbox,
+            username=body.username,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
@@ -70,6 +71,7 @@ async def create_project(
         created_at=session.created_at,
         current_agent=None,
         requirements=session.requirements,
+        username=session.username,
         workspace_path=session.workspace_path,
         project_url=project_url,
         events_url=events_url,
@@ -89,6 +91,7 @@ async def list_projects(
             created_at=s.created_at,
             current_agent=None,
             requirements=s.requirements,
+            username=s.username,
         )
         for s in sessions
     ]
@@ -115,6 +118,7 @@ async def get_project(
         current_agent=state.get("current_agent") or None,
         requirements=state.get("requirements", session.requirements),
         workspace_path=state.get("workspace_path", session.workspace_path),
+        username=state.get("username", session.username),
         project_url=project_url,
         events_url=f"{project_url}/events",
         user_stories=state.get("user_stories", []),
