@@ -1,0 +1,27 @@
+[project]
+name = "multi-agent-dev-team"
+version = "0.1.0"
+description = "A multi-agent development team powered by LangGraph"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3",
+    "langchain-groq>=0.2.0",
+    "langchain-google-genai>=2.0.0",
+    "langchain-ollama>=0.2.0",
+    "langchain-openai>=0.3",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[project.scripts]
+devteam = "src.main:main"
+devteam-api = "src.api.app:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

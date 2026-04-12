@@ -1,0 +1,45 @@
+default_provider: groq
+
+providers:
+  groq:
+    model: "llama-3.3-70b-versatile"
+    temperature: 0.2
+    max_tokens: 8192
+
+  groq_small:
+    model: "llama-3.1-8b-instant"
+    temperature: 0.2
+    max_tokens: 8192
+
+  gemini:
+    model: "gemini-2.5-flash"
+    temperature: 0.2
+
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "llama3.1:8b"
+    temperature: 0.2
+
+  openai_compatible:
+    base_url: "http://localhost:1234/v1"
+    api_key: "not-needed"
+    model: "local-model"
+    temperature: 0.2
+
+# Multi-provider agent assignment
+agent_models:
+  pm_agent: "groq_small"
+  architect_agent: "groq"
+  developer_agent: "groq"
+  reviewer_agent: "gemini"
+  tester_agent: "gemini"
+
+workspace:
+  output_dir: "./output"
+  max_review_iterations: 3
+
+# Docker sandbox — isolates agent shell commands in a container
+# Set to true to run pip install, npm install, tests, etc. inside Docker
+# Falls back to direct host execution if Docker is unavailable
+sandbox:
+  enabled: true
