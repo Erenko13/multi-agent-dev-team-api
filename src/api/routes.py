@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from src.api.dependencies import get_session_manager
@@ -28,9 +28,16 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health_check() -> dict[str, Any]:
+async def health_check(
+    manager: SessionManager = Depends(get_session_manager),
+) -> dict[str, Any]:
     docker_available = DockerSandbox.is_docker_available()
-    return {"status": "ok", "docker_available": docker_available}
+    return {
+        "status": "ok",
+        "docker_available": docker_available,
+        "available_slots": manager.available_slots(),
+        "total_slots": 5,
+    }
 
 
 # ------------------------------------------------------------------
@@ -40,14 +47,22 @@ async def health_check() -> dict[str, Any]:
 
 @router.post("/projects", status_code=201, response_model=ProjectDetail)
 async def create_project(
+    request: Request,
     body: CreateProjectRequest,
     manager: SessionManager = Depends(get_session_manager),
 ) -> ProjectDetail:
-    session = await manager.create_session(
-        requirements=body.requirements,
-        use_sandbox=body.use_sandbox,
-    )
+    try:
+        session = await manager.create_session(
+            requirements=body.requirements,
+            use_sandbox=body.use_sandbox,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     manager.start_pipeline(session.project_id)
+
+    base = str(request.base_url).rstrip("/")
+    project_url = f"{base}/api/projects/{session.project_id}"
+    events_url = f"{project_url}/events"
 
     return ProjectDetail(
         project_id=session.project_id,
@@ -56,6 +71,8 @@ async def create_project(
         current_agent=None,
         requirements=session.requirements,
         workspace_path=session.workspace_path,
+        project_url=project_url,
+        events_url=events_url,
     )
 
 
@@ -80,6 +97,7 @@ async def list_projects(
 @router.get("/projects/{project_id}", response_model=ProjectDetail)
 async def get_project(
     project_id: str,
+    request: Request,
     manager: SessionManager = Depends(get_session_manager),
 ) -> ProjectDetail:
     session = manager.get_session(project_id)
@@ -87,6 +105,8 @@ async def get_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     state = manager.get_state_snapshot(project_id)
+    base = str(request.base_url).rstrip("/")
+    project_url = f"{base}/api/projects/{project_id}"
 
     return ProjectDetail(
         project_id=state.get("project_id", project_id),
@@ -95,6 +115,8 @@ async def get_project(
         current_agent=state.get("current_agent") or None,
         requirements=state.get("requirements", session.requirements),
         workspace_path=state.get("workspace_path", session.workspace_path),
+        project_url=project_url,
+        events_url=f"{project_url}/events",
         user_stories=state.get("user_stories", []),
         task_plan=state.get("task_plan", []),
         architecture_doc=state.get("architecture_doc", ""),

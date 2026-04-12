@@ -3,10 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncGenerator
+
+SLOT_COUNT = 5
+SLOT_NAMES = [f"project_{i}" for i in range(1, SLOT_COUNT + 1)]
 
 from langgraph.types import Command
 
@@ -26,12 +31,15 @@ class PipelineSession:
     created_at: datetime
     requirements: str
     workspace_path: str
+    slot: str  # e.g. "project_1"
     thread_id: str
     graph: Any  # CompiledStateGraph
     config: AppConfig
+    container_workspace_path: str = "/workspace"  # /workspace/project_X
     sandbox: DockerSandbox | None = None
     task: asyncio.Task | None = None  # type: ignore[type-arg]
     error: str | None = None
+    _slot_released: bool = False
 
     # Approval bridge
     approval_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -71,6 +79,30 @@ class SessionManager:
         self._config = config
         self._sessions: dict[str, PipelineSession] = {}
 
+        # Create the 5 fixed workspace slot directories upfront
+        self._available_slots: asyncio.Queue[str] = asyncio.Queue()
+        output_dir_abs = os.path.abspath(config.output_dir)
+        for slot in SLOT_NAMES:
+            slot_dir = os.path.join(output_dir_abs, slot)
+            os.makedirs(slot_dir, exist_ok=True)
+            self._available_slots.put_nowait(slot)
+
+        logger.info("Workspace slots ready: %s", ", ".join(SLOT_NAMES))
+
+        # One shared sandbox: mounts the entire output/ dir → /workspace
+        self._shared_sandbox: DockerSandbox | None = None
+        if config.use_sandbox:
+            if DockerSandbox.is_docker_available():
+                self._shared_sandbox = DockerSandbox(output_dir_abs)
+                try:
+                    self._shared_sandbox.start()
+                    logger.info("Shared sandbox started: %s", self._shared_sandbox.container_name)
+                except Exception:
+                    logger.warning("Failed to start shared sandbox, falling back to host", exc_info=True)
+                    self._shared_sandbox = None
+            else:
+                logger.warning("Docker not available — shell commands will run on host")
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -78,25 +110,32 @@ class SessionManager:
     async def create_session(
         self, requirements: str, use_sandbox: bool = True
     ) -> PipelineSession:
+        # Acquire a free slot — raises immediately if all 5 are busy
+        try:
+            slot = self._available_slots.get_nowait()
+        except asyncio.QueueEmpty:
+            raise RuntimeError(
+                f"All {SLOT_COUNT} project slots are currently in use. "
+                "Wait for an existing project to finish or cancel one."
+            )
+
+        # Clear any leftover files from a previous project in this slot
+        workspace_path = os.path.join(self._config.output_dir, slot)
+        workspace_path = os.path.abspath(workspace_path)
+        for item in Path(workspace_path).iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
         project_id = uuid.uuid4().hex[:12]
         thread_id = str(uuid.uuid4())
 
-        # Per-session workspace: output_dir / project_id
-        base_output = self._config.output_dir
-        session_output = os.path.join(base_output, project_id)
-        workspace_path = prepare_workspace(session_output)
+        # Use the shared sandbox if available and requested
+        sandbox = self._shared_sandbox if (use_sandbox and self._shared_sandbox) else None
 
-        # Optionally start a Docker sandbox
-        sandbox: DockerSandbox | None = None
-        if use_sandbox and self._config.use_sandbox:
-            if DockerSandbox.is_docker_available():
-                sandbox = DockerSandbox(workspace_path)
-                try:
-                    await asyncio.to_thread(sandbox.start)
-                    logger.info("Sandbox started: %s", sandbox.container_name)
-                except Exception:
-                    logger.warning("Failed to start sandbox, falling back to host", exc_info=True)
-                    sandbox = None
+        # Container path mirrors the host slot dir inside /workspace
+        container_workspace_path = f"/workspace/{slot}"
 
         graph = compile_graph(self._config, sandbox=sandbox)
 
@@ -106,12 +145,15 @@ class SessionManager:
             created_at=datetime.now(timezone.utc),
             requirements=requirements,
             workspace_path=workspace_path,
+            slot=slot,
             thread_id=thread_id,
             graph=graph,
             config=self._config,
             sandbox=sandbox,
+            container_workspace_path=container_workspace_path,
         )
         self._sessions[project_id] = session
+        logger.info("Session %s assigned to slot %s (container: %s)", project_id, slot, container_workspace_path)
         return session
 
     def start_pipeline(self, project_id: str) -> None:
@@ -179,11 +221,19 @@ class SessionManager:
         session = self._get_session(project_id)
         if session.task and not session.task.done():
             session.task.cancel()
+            # _run_pipeline's finally will release the slot after cancellation
+        else:
+            # Task never started or already done — release the slot here
+            self._release_slot(session)
         session.status = ProjectStatus.cancelled
         session.publish_event(
             ProjectEvent(event_type="pipeline_cancelled")
         )
         await self._cleanup_sandbox(session)
+
+    def available_slots(self) -> int:
+        """Number of free project slots."""
+        return self._available_slots.qsize()
 
     def list_sessions(
         self, status: ProjectStatus | None = None
@@ -197,11 +247,16 @@ class SessionManager:
         return self._sessions.get(project_id)
 
     async def shutdown(self) -> None:
-        """Cancel all running sessions and clean up."""
+        """Cancel all running sessions and stop the shared sandbox."""
         for session in self._sessions.values():
             if session.task and not session.task.done():
                 session.task.cancel()
-            await self._cleanup_sandbox(session)
+        if self._shared_sandbox is not None:
+            try:
+                await asyncio.to_thread(self._shared_sandbox.stop)
+                logger.info("Shared sandbox stopped")
+            except Exception:
+                logger.warning("Failed to stop shared sandbox", exc_info=True)
 
     # ------------------------------------------------------------------
     # Internal
@@ -225,17 +280,17 @@ class SessionManager:
             data=session.pending_interrupt,
         )
 
+    def _release_slot(self, session: PipelineSession) -> None:
+        """Return the session's workspace slot to the available pool (idempotent)."""
+        if not session._slot_released:
+            session._slot_released = True
+            self._available_slots.put_nowait(session.slot)
+            logger.info("Slot %s released by session %s", session.slot, session.project_id)
+
     async def _cleanup_sandbox(self, session: PipelineSession) -> None:
-        if session.sandbox is not None:
-            try:
-                await asyncio.to_thread(session.sandbox.stop)
-                logger.info("Sandbox stopped for %s", session.project_id)
-            except Exception:
-                logger.warning(
-                    "Failed to stop sandbox for %s",
-                    session.project_id,
-                    exc_info=True,
-                )
+        # The sandbox is shared — it lives for the server lifetime and is
+        # stopped in shutdown(). Nothing to do per session.
+        pass
 
     async def _run_pipeline(self, session: PipelineSession) -> None:
         """Background task that runs the LangGraph pipeline to completion."""
@@ -250,6 +305,7 @@ class SessionManager:
             "user_requirements": session.requirements,
             "messages": [],
             "workspace_path": session.workspace_path,
+            "container_workspace_path": session.container_workspace_path,
             "review_iteration": 0,
             "architecture_approved": False,
             "final_approved": False,
@@ -358,6 +414,7 @@ class SessionManager:
             )
         finally:
             await self._cleanup_sandbox(session)
+            self._release_slot(session)
 
     @staticmethod
     def _stream_graph(

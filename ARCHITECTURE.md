@@ -421,11 +421,26 @@ Each `POST /api/projects` creates an isolated **PipelineSession** with:
 
 | Component | Per-Session? | Why |
 |-----------|-------------|-----|
-| `CompiledStateGraph` | Yes | Sandbox is bound at compile time via `partial()` |
-| `MemorySaver` checkpointer | Yes | Isolates checkpoint state across concurrent runs |
-| `DockerSandbox` container | Yes | Different workspace bind mounts per project |
-| Workspace directory | Yes | `{output_dir}/{project_id}/` prevents file collisions |
+| `CompiledStateGraph` | Yes | Each session gets its own graph + `MemorySaver` checkpointer for state isolation |
+| Workspace slot | Yes | One of 5 fixed directories (`output/project_1/` … `output/project_5/`) |
 | `asyncio.Task` | Yes | Background pipeline execution |
+| `DockerSandbox` | **Shared** | One container for the server lifetime; mounts all 5 slots at once |
+
+**5 fixed workspace slots** (`project_1` … `project_5`) are created inside `output/` at server startup. A project is assigned to a free slot when it starts and releases it when it finishes. If all 5 are busy, `POST /api/projects` returns **503**. Project files persist in the slot after completion and are only cleared when the slot is reused for a new project.
+
+**Slot ↔ container path mapping:**
+
+```
+Host filesystem              Docker container (/workspace bind-mount)
+──────────────────           ────────────────────────────────────────
+output/project_1/  ────────► /workspace/project_1/
+output/project_2/  ────────► /workspace/project_2/
+output/project_3/  ────────► /workspace/project_3/
+output/project_4/  ────────► /workspace/project_4/
+output/project_5/  ────────► /workspace/project_5/
+```
+
+`container_workspace_path` (e.g. `/workspace/project_2`) is stored in `AgentState` so the Developer and Tester agents pass it as the working directory to every `docker exec` call via `make_shell_tool(..., container_workdir=container_workspace_path)`.
 
 ### Async Execution Model
 
@@ -513,11 +528,14 @@ A keepalive comment (`: keepalive`) is sent every 30 seconds to prevent proxy/cl
 | Decision | Rationale |
 |----------|-----------|
 | API layer is additive only — no changes to existing code | Agents, tools, graph, and CLI continue to work independently |
-| One graph per session (not shared) | Sandbox binding via `partial()` happens at compile time; concurrent sessions need different sandboxes |
+| One graph per session (not shared) | Each session needs its own `MemorySaver` checkpointer for state isolation |
+| One shared `DockerSandbox` for the server lifetime | Mounting the entire `output/` once is simpler and cheaper than one container per session; all 5 slots are visible at `/workspace/project_1` … `/workspace/project_5` |
+| 5 fixed workspace slots instead of unlimited UUID dirs | Caps concurrent resource usage (Docker memory/CPU limits apply once); projects persist in named, predictable directories |
+| `container_workspace_path` in `AgentState` | Agents need the container-side path (e.g. `/workspace/project_2`) to set the correct `docker exec -w` working directory — separate from the host-side `workspace_path` used by file tools |
+| Project files persist after pipeline completes | Slot is cleared only when reused, so generated code remains accessible until the next project starts in that slot |
 | `asyncio.to_thread()` for graph execution | LangGraph is synchronous; wrapping in a thread prevents blocking the event loop |
 | SSE over WebSocket | Simpler for unidirectional server-to-client streaming; sufficient for status updates |
 | Module-level singleton for `SessionManager` DI | Avoids `app.state` coupling; easy to mock in tests |
-| Per-session workspace subdirectory | `{output_dir}/{project_id}/` prevents file collisions between concurrent runs |
 
 ---
 

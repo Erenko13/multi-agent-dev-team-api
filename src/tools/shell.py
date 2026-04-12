@@ -62,8 +62,9 @@ def _validate_command(command: str) -> str | None:
     return None
 
 
-def make_shell_tool(workspace_path: str, sandbox: DockerSandbox | None = None):
-    """Create a shell command tool. If sandbox is provided, commands run inside the Docker container."""
+def make_shell_tool(workspace_path: str, sandbox: DockerSandbox | None = None, container_workdir: str | None = None):
+    """Create a shell command tool. If sandbox is provided, commands run inside the Docker container
+    at container_workdir (defaults to /workspace if not specified)."""
 
     @tool
     def run_shell_command(command: str) -> str:
@@ -73,8 +74,9 @@ def make_shell_tool(workspace_path: str, sandbox: DockerSandbox | None = None):
             return error
 
         if sandbox is not None and sandbox.is_running():
-            # Execute inside Docker container
-            output, exit_code = sandbox.exec(command)
+            # Execute inside Docker container at the session's project slot directory
+            workdir = container_workdir or "/workspace"
+            output, exit_code = sandbox.exec(command, workdir=workdir)
             if exit_code != 0:
                 output += f"\n[exit code: {exit_code}]"
             return output

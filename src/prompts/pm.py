@@ -24,6 +24,7 @@ Output a JSON array of task objects. Each task has:
 - Developer tasks come before tester tasks
 - Include tasks for: project setup, backend, frontend, integration, and testing
 - Keep it practical — no over-engineering
+- Always include a final developer task to install all dependencies and run the project inside the Docker sandbox to verify it starts correctly. Title it "Run project in Docker sandbox" and describe which commands to use (e.g. `pip install -r requirements.txt && python app.py` or `npm install && npm start`).
 
 ## Output Format
 You MUST respond with valid JSON in this exact structure:

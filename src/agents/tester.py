@@ -20,10 +20,11 @@ def tester_node(state: AgentState, config: AppConfig, sandbox: DockerSandbox | N
     """Tester agent: writes tests and runs them."""
     llm = get_llm_for_agent("tester_agent", config)
     workspace_path = state["workspace_path"]
+    container_workdir = state.get("container_workspace_path", "/workspace")
 
-    # Create tools scoped to workspace (shell runs inside sandbox if available)
+    # Create tools scoped to workspace (shell runs inside sandbox's project slot)
     write_file, read_file, list_directory = make_file_tools(workspace_path)
-    run_shell_command = make_shell_tool(workspace_path, sandbox=sandbox)
+    run_shell_command = make_shell_tool(workspace_path, sandbox=sandbox, container_workdir=container_workdir)
 
     tools = [write_file, read_file, list_directory, run_shell_command]
     llm_with_tools = llm.bind_tools(tools)

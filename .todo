@@ -4,4 +4,4 @@
 
 - [ ] Add session persistence — sessions are lost on server restart (consider SqliteSaver or a lightweight DB)
 - [ ] Add TTL/eviction for completed sessions — they currently stay in memory forever
-- [ ] Add concurrency limits — nothing prevents unlimited concurrent sessions, each spinning up its own Docker container
+- [x] Add concurrency limits — 5 fixed workspace slots, projects queue for an available slot

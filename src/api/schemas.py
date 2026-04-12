@@ -50,6 +50,8 @@ class ProjectSummary(BaseModel):
 
 
 class ProjectDetail(ProjectSummary):
+    project_url: str = ""
+    events_url: str = ""
     workspace_path: str = ""
     user_stories: list[str] = []
     task_plan: list[dict[str, Any]] = []

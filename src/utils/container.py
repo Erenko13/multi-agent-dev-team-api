@@ -14,13 +14,15 @@ class DockerSandbox:
 
     Architecture:
     - Host ./output/ is bind-mounted to /workspace inside the container
-    - File tools write to ./output/ on the host (visible inside container via mount)
-    - Shell commands execute inside the container via `docker exec`
-    - Container is created on pipeline start and destroyed on finish
+    - The 5 project slots live at /workspace/project_1 … /workspace/project_5
+    - File tools write to ./output/project_X/ on the host (visible in the container
+      at /workspace/project_X/ via the bind mount)
+    - Shell commands execute inside the container via `docker exec -w <slot_dir>`
+    - One container is shared across all sessions for the server lifetime
     """
 
-    def __init__(self, host_workspace: str):
-        self.host_workspace = host_workspace
+    def __init__(self, host_output_dir: str):
+        self.host_output_dir = host_output_dir
         self.container_name = f"{CONTAINER_PREFIX}{uuid.uuid4().hex[:8]}"
         self.container_id: str | None = None
 
@@ -53,7 +55,7 @@ class DockerSandbox:
             [
                 "docker", "run", "-d",
                 "--name", self.container_name,
-                "-v", f"{self.host_workspace}:{WORKSPACE_CONTAINER_PATH}",
+                "-v", f"{self.host_output_dir}:{WORKSPACE_CONTAINER_PATH}",
                 "-w", WORKSPACE_CONTAINER_PATH,
                 "--memory", "2g",
                 "--cpus", "2",
@@ -64,14 +66,14 @@ class DockerSandbox:
         )
         self.container_id = result.stdout.strip()
 
-    def exec(self, command: str, timeout: int = 120) -> tuple[str, int]:
-        """Execute a command inside the container. Returns (output, exit_code)."""
+    def exec(self, command: str, workdir: str = WORKSPACE_CONTAINER_PATH, timeout: int = 120) -> tuple[str, int]:
+        """Execute a command inside the container at the given workdir. Returns (output, exit_code)."""
         if not self.container_id:
             raise RuntimeError("Container not started")
 
         try:
             result = subprocess.run(
-                ["docker", "exec", self.container_name, "sh", "-c", command],
+                ["docker", "exec", "-w", workdir, self.container_name, "sh", "-c", command],
                 capture_output=True, text=True, timeout=timeout,
             )
             output = ""

@@ -69,5 +69,6 @@ class AgentState(TypedDict):
 
     # Metadata
     current_agent: str
-    workspace_path: str
+    workspace_path: str          # host path: output/project_X/
+    container_workspace_path: str  # container path: /workspace/project_X
     error: str
