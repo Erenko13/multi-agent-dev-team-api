@@ -1,6 +1,6 @@
 # Multi-Agent Dev Team API
 
-> Detaylı bilgi için: [README2.md](README2.md) · [ARCHITECTURE.md](ARCHITECTURE.md) Frontend için: [multi-agent-dev-team-fe](https://github.com/Erenko13/multi-agent-dev-team-fe)
+> Detaylı bilgi için: [README2.md](README2.md) · [ARCHITECTURE.md](ARCHITECTURE.md) Frontend için: [multi-agent-dev-team-fe](https://github.com/Erenko13/multi-agent-dev-team-fe) Projenin linki için: (http://212.87.198.11:3030/)
 
 ## 1. Amaç
 
